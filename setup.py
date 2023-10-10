@@ -30,7 +30,7 @@ def _get_package_version():
     return f'{parts["major"]}.{parts["minor"]}.{parts["patch"]}'
 
 
-dbt_version = "1.5"
+dbt_version = "1.6"
 package_version = _get_package_version()
 description = "The athena adapter plugin for dbt (data build tool)"
 
@@ -54,7 +54,7 @@ setup(
         # In order to control dbt-core version and package version
         "boto3~=1.26",
         "boto3-stubs[athena,glue,lakeformation,sts]~=1.26",
-        "dbt-core~=1.5.0",
+        "dbt-core~=1.6.0",
         "pyathena>=2.25,<4.0",
         "pydantic~=1.10",
         "tenacity~=8.2",
