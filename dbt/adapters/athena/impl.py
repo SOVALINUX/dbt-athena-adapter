@@ -219,6 +219,7 @@ class AthenaAdapter(SQLAdapter):
 
     @available
     def is_work_group_output_location_enforced(self) -> bool:
+        # We are doing a cache here to avoid rate limiting in case of large dbt projects
         if self.work_group_output_location_enforced is None:
             conn = self.connections.get_thread_connection()
             creds = conn.credentials
