@@ -133,7 +133,8 @@ class AthenaAdapter(SQLAdapter):
 
     quote_character: str = '"'  # Presto quote character
 
-    work_group_output_location_enforced: bool = None  # AWS WorkGroup cache
+    # Workgroup settings updated rarely, so this flag was cached for dbt execution
+    work_group_output_location_enforced: Optional[bool] = None  # AWS WorkGroup cache
 
     # There is no such concept as constraints in Athena
     CONSTRAINT_SUPPORT = {
@@ -218,6 +219,7 @@ class AthenaAdapter(SQLAdapter):
 
     @available
     def is_work_group_output_location_enforced(self) -> bool:
+        # We are doing a cache here to avoid rate limiting in case of large dbt projects
         if self.work_group_output_location_enforced is None:
             conn = self.connections.get_thread_connection()
             creds = conn.credentials
@@ -240,7 +242,9 @@ class AthenaAdapter(SQLAdapter):
                     )
 
                     output_location_enforced = (
-                        work_group.get("WorkGroup", {}).get("Configuration", {}).get("EnforceWorkGroupConfiguration", False)
+                        work_group.get("WorkGroup", {})
+                        .get("Configuration", {})
+                        .get("EnforceWorkGroupConfiguration", False)
                     )
 
                     self.work_group_output_location_enforced = output_location is not None and output_location_enforced
