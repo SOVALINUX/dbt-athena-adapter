@@ -135,6 +135,9 @@ class AthenaAdapter(SQLAdapter):
 
     quote_character: str = '"'  # Presto quote character
 
+    # Workgroup settings updated rarely, so this flag was cached for dbt execution
+    work_group_output_location_enforced: Optional[bool] = None  # AWS WorkGroup cache
+
     # There is no such concept as constraints in Athena
     CONSTRAINT_SUPPORT = {
         ConstraintType.check: ConstraintSupport.NOT_SUPPORTED,
@@ -237,25 +240,39 @@ class AthenaAdapter(SQLAdapter):
 
     @available
     def is_work_group_output_location_enforced(self) -> bool:
-        conn = self.connections.get_thread_connection()
-        creds = conn.credentials
+        # We are doing a cache here to avoid rate limiting in case of large dbt projects
+        if self.work_group_output_location_enforced is None:
+            conn = self.connections.get_thread_connection()
+            creds = conn.credentials
+            client = conn.handle
 
-        if creds.work_group:
-            work_group = self._get_work_group(creds.work_group)
-            output_location = (
-                work_group.get("WorkGroup", {})
-                .get("Configuration", {})
-                .get("ResultConfiguration", {})
-                .get("OutputLocation", None)
-            )
+            with boto3_client_lock:
+                athena_client = client.session.client(
+                    "athena",
+                    region_name=client.region_name,
+                    config=get_boto3_config(num_retries=creds.effective_num_retries),
+                )
 
-            output_location_enforced = (
-                work_group.get("WorkGroup", {}).get("Configuration", {}).get("EnforceWorkGroupConfiguration", False)
-            )
+                if creds.work_group:
+                    work_group = athena_client.get_work_group(WorkGroup=creds.work_group)
+                    output_location = (
+                        work_group.get("WorkGroup", {})
+                        .get("Configuration", {})
+                        .get("ResultConfiguration", {})
+                        .get("OutputLocation", None)
+                    )
 
-            return output_location is not None and output_location_enforced
-        else:
-            return False
+                    output_location_enforced = (
+                        work_group.get("WorkGroup", {})
+                        .get("Configuration", {})
+                        .get("EnforceWorkGroupConfiguration", False)
+                    )
+
+                    self.work_group_output_location_enforced = output_location is not None and output_location_enforced
+                else:
+                    self.work_group_output_location_enforced = False
+
+        return self.work_group_output_location_enforced
 
     def _s3_table_prefix(
         self, s3_data_dir: Optional[str], s3_tmp_table_dir: Optional[str], is_temporary_table: bool
