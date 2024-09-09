@@ -64,7 +64,7 @@
           {%- set type = column_override.get(col_name, inferred_type) -%}
           {%- set type = type if type != "string" else "varchar" -%}
           {%- set column_name = (col_name | string) -%}
-          {{ adapter.quote_seed_column(column_name, quote_seed_column) }} {{ ddl_data_type(type) }} {%- if not loop.last -%}, {% endif -%}
+          {{ adapter.quote_seed_column(column_name, quote_seed_column, "`") }} {{ ddl_data_type(type) }} {%- if not loop.last -%}, {% endif -%}
         {%- endfor -%}
     )
     location '{{ location }}'
@@ -90,23 +90,33 @@
 {% macro create_csv_table_upload(model, agate_table) %}
   {%- set identifier = model['alias'] -%}
 
+  {%- set execution_started_at = run_started_at.strftime("%m/%d/%Y, %H:%M:%S") -%}
+  {%- set value_hash = local_md5(execution_started_at) -%}
+
   {%- set lf_tags_config = config.get('lf_tags_config') -%}
-  {%- set lf_inherited_tags = config.get('lf_inherited_tags') -%}
   {%- set lf_grants = config.get('lf_grants') -%}
 
   {%- set column_override = config.get('column_types', {}) -%}
   {%- set quote_seed_column = config.get('quote_columns', None) -%}
   {%- set s3_data_dir = config.get('s3_data_dir', default=target.s3_data_dir) -%}
   {%- set s3_data_naming = config.get('s3_data_naming', target.s3_data_naming) -%}
-  {%- set external_location = config.get('external_location', default=none) -%}
+  {%- set external_location = config.get('external_location', default=target.s3_staging_dir) -%}
   {%- set seed_s3_upload_args = config.get('seed_s3_upload_args', default=target.seed_s3_upload_args) -%}
 
-  {%- set tmp_relation = api.Relation.create(
-    identifier=identifier + "__dbt_tmp",
+    -- create target relation
+  {%- set target_relation = api.Relation.create(
+    identifier=identifier,
     schema=model.schema,
     database=model.database,
     type='table'
   ) -%}
+
+  {%- set tmp_relation = api.Relation.create(
+    identifier=target_relation.identifier ~ "_" ~ value_hash ~ '__ha',
+    schema=schema,
+    database=database,
+    s3_path_table_part=target_relation.identifier,
+    type='table') -%}
 
   {%- set tmp_s3_location = adapter.upload_seed_to_s3(
     tmp_relation,
@@ -117,13 +127,7 @@
     seed_s3_upload_args=seed_s3_upload_args
   ) -%}
 
-  -- create target relation
-  {%- set relation = api.Relation.create(
-    identifier=identifier,
-    schema=model.schema,
-    database=model.database,
-    type='table'
-  ) -%}
+
 
   -- drop tmp relation if exists
   {{ drop_relation(tmp_relation) }}
@@ -132,7 +136,7 @@
     create external table {{ tmp_relation.render_hive() }} (
         {%- for col_name in agate_table.column_names -%}
             {%- set column_name = (col_name | string) -%}
-            {{ adapter.quote_seed_column(column_name, quote_seed_column) }} string {%- if not loop.last -%}, {% endif -%}
+            {{ adapter.quote_seed_column(column_name, quote_seed_column, "`") }} string {%- if not loop.last -%}, {% endif -%}
         {%- endfor -%}
     )
     row format serde 'org.apache.hadoop.hive.serde2.OpenCSVSerde'
@@ -168,7 +172,8 @@
   {%- endcall -%}
 
   -- create target table from tmp table
-  {% set sql_table = create_table_as(false, relation, sql)  %}
+  {% set sql_table = create_table_as(false, target_relation, sql)  %}
+  {{ log("Running some_macro: " ~ sql_table ) }}
   {% call statement('_') -%}
     {{ sql_table }}
   {%- endcall %}
@@ -180,11 +185,11 @@
   {% do adapter.delete_from_s3(tmp_s3_location) %}
 
   {% if lf_tags_config is not none %}
-    {{ adapter.add_lf_tags(relation, lf_tags_config, lf_inherited_tags) }}
+    {{ adapter.add_lf_tags(target_relation, lf_tags_config) }}
   {% endif %}
 
   {% if lf_grants is not none %}
-    {{ adapter.apply_lf_grants(relation, lf_grants) }}
+    {{ adapter.apply_lf_grants(target_relation, lf_grants) }}
   {% endif %}
 
   {{ return(sql_table) }}
