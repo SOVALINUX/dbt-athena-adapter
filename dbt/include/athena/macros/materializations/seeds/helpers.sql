@@ -188,7 +188,9 @@
     {{ adapter.apply_lf_grants(target_relation, lf_grants) }}
   {% endif %}
 
+
   {{ return(sql_table) }}
+
 {% endmacro %}
 
 {% macro athena__create_csv_table(model, agate_table) %}
@@ -201,7 +203,6 @@
   {%- else -%}
     {% do log('seed by upload...') %}
     {%- set sql_table = create_csv_table_upload(model, agate_table) -%}
-
   {%- endif -%}
 
   {{ return(sql_table) }}
