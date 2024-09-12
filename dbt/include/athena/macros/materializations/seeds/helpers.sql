@@ -1,9 +1,5 @@
 {% macro default__reset_csv_table(model, full_refresh, old_relation, agate_table) %}
-    {% set sql = "" %}
-    -- No truncate in Athena so always drop CSV table and recreate
-    {{ drop_relation(old_relation) }}
     {% set sql = create_csv_table(model, agate_table) %}
-
     {{ return(sql) }}
 {% endmacro %}
 
@@ -90,9 +86,6 @@
 {% macro create_csv_table_upload(model, agate_table) %}
   {%- set identifier = model['alias'] -%}
 
-  {%- set execution_started_at = run_started_at.strftime("%m/%d/%Y, %H:%M:%S") -%}
-  {%- set value_hash = local_md5(execution_started_at) -%}
-
   {%- set lf_tags_config = config.get('lf_tags_config') -%}
   {%- set lf_grants = config.get('lf_grants') -%}
 
@@ -100,24 +93,21 @@
   {%- set quote_seed_column = config.get('quote_columns', None) -%}
   {%- set s3_data_dir = config.get('s3_data_dir', default=target.s3_data_dir) -%}
   {%- set s3_data_naming = config.get('s3_data_naming', target.s3_data_naming) -%}
-  {%- set external_location = config.get('external_location', default=target.s3_staging_dir) -%}
+  {%- set external_location = config.get('external_location', default=none) -%}
   {%- set seed_s3_upload_args = config.get('seed_s3_upload_args', default=target.seed_s3_upload_args) -%}
+  
+  {%- set old_relation = adapter.get_relation(database=database, schema=schema, identifier=identifier) -%}
 
-    -- create target relation
-  {%- set target_relation = api.Relation.create(
-    identifier=identifier,
+
+  -- create tmp external relation
+  {%- set tmp_relation = api.Relation.create(
+    identifier=identifier + "__dbt_tmp",
     schema=model.schema,
     database=model.database,
     type='table'
   ) -%}
 
-  {%- set tmp_relation = api.Relation.create(
-    identifier=target_relation.identifier ~ "_" ~ value_hash ~ '__ha',
-    schema=schema,
-    database=database,
-    s3_path_table_part=target_relation.identifier,
-    type='table') -%}
-
+    -- create S3 location for CSV
   {%- set tmp_s3_location = adapter.upload_seed_to_s3(
     tmp_relation,
     agate_table,
@@ -127,8 +117,14 @@
     seed_s3_upload_args=seed_s3_upload_args
   ) -%}
 
+  -- create target relation
+  {%- set target_relation = api.Relation.create(
+    identifier=identifier,
+    schema=schema,
+    database=database,
+    type='table') -%}
 
-
+    
   -- drop tmp relation if exists
   {{ drop_relation(tmp_relation) }}
 
@@ -166,23 +162,23 @@
         {{ tmp_relation }}
   {% endset %}
 
+
   -- create tmp table
   {% call statement('_') -%}
     {{ sql_tmp_table }}
   {%- endcall -%}
 
   -- create target table from tmp table
-  {% set sql_table = create_table_as(false, target_relation, sql)  %}
-  {{ log("Running some_macro: " ~ sql_table ) }}
-  {% call statement('_') -%}
-    {{ sql_table }}
-  {%- endcall %}
+  {%- if old_relation is not none -%}
+    {%- set sql_table = adapter.swap_table(tmp_relation, target_relation) -%}
+  {%- else -%}
+    {% set sql_table = create_table_as(false, target_relation, sql)  %}
+    {% call statement('_') -%}
+      {{ sql_table }}
+    {%- endcall %}
+  {%- endif -%}
 
-  -- drop tmp table
-  {{ drop_relation(tmp_relation) }}
-
-  -- delete csv file from s3
-  {% do adapter.delete_from_s3(tmp_s3_location) %}
+  {%- do adapter.delete_from_glue_catalog(tmp_relation) -%}
 
   {% if lf_tags_config is not none %}
     {{ adapter.add_lf_tags(target_relation, lf_tags_config) }}
@@ -205,6 +201,7 @@
   {%- else -%}
     {% do log('seed by upload...') %}
     {%- set sql_table = create_csv_table_upload(model, agate_table) -%}
+
   {%- endif -%}
 
   {{ return(sql_table) }}
