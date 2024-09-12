@@ -95,7 +95,7 @@
   {%- set s3_data_naming = config.get('s3_data_naming', target.s3_data_naming) -%}
   {%- set external_location = config.get('external_location', default=none) -%}
   {%- set seed_s3_upload_args = config.get('seed_s3_upload_args', default=target.seed_s3_upload_args) -%}
-  
+
   {%- set old_relation = adapter.get_relation(database=database, schema=schema, identifier=identifier) -%}
 
 
@@ -132,7 +132,7 @@
     database=database,
     type='table') -%}
 
-    
+
   -- drop tmp relation if exists
   {{ drop_relation(tmp_external_relation) }}
   {{ drop_relation(tmp_relation) }}
@@ -207,7 +207,7 @@
 
   -- delete csv file from s3
   {% do adapter.delete_from_s3(tmp_s3_location) %}
-  
+
   {{ return(sql_table) }}
 {% endmacro %}
 
