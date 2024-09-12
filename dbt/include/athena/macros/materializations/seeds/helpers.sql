@@ -100,7 +100,7 @@
 
 
   -- create tmp external relation
-  {%- set tmp_relation = api.Relation.create(
+  {%- set tmp_external_relation = api.Relation.create(
     identifier=identifier + "__dbt_tmp",
     schema=model.schema,
     database=model.database,
@@ -109,12 +109,20 @@
 
     -- create S3 location for CSV
   {%- set tmp_s3_location = adapter.upload_seed_to_s3(
-    tmp_relation,
+    tmp_external_relation,
     agate_table,
     s3_data_dir,
     s3_data_naming,
     external_location,
     seed_s3_upload_args=seed_s3_upload_args
+  ) -%}
+
+    -- create tmp relation
+  {%- set tmp_relation = api.Relation.create(
+    identifier=identifier + "__ha",
+    schema=model.schema,
+    database=model.database,
+    type='table'
   ) -%}
 
   -- create target relation
@@ -126,10 +134,11 @@
 
     
   -- drop tmp relation if exists
+  {{ drop_relation(tmp_external_relation) }}
   {{ drop_relation(tmp_relation) }}
 
-  {% set sql_tmp_table %}
-    create external table {{ tmp_relation.render_hive() }} (
+  {% set sql_ext_tmp_table %}
+    create external table {{ tmp_external_relation.render_hive() }} (
         {%- for col_name in agate_table.column_names -%}
             {%- set column_name = (col_name | string) -%}
             {{ adapter.quote_seed_column(column_name, quote_seed_column, "`") }} string {%- if not loop.last -%}, {% endif -%}
@@ -159,14 +168,20 @@
             {%- if not loop.last -%}, {% endif -%}
         {%- endfor %}
     from
-        {{ tmp_relation }}
+        {{ tmp_external_relation }}
   {% endset %}
 
 
   -- create tmp table
   {% call statement('_') -%}
-    {{ sql_tmp_table }}
+    {{ sql_ext_tmp_table }}
   {%- endcall -%}
+
+  -- create tmp table
+  {% set sql_tmp_table = create_table_as(false, tmp_relation, sql)  %}
+  {% call statement('_') -%}
+    {{ sql_tmp_table }}
+  {%- endcall %}
 
   -- create target table from tmp table
   {%- if old_relation is not none -%}
@@ -178,6 +193,8 @@
     {%- endcall %}
   {%- endif -%}
 
+  -- delete glue tmp table, do not use drop_relation, as it will remove data of the target table
+  {%- do adapter.delete_from_glue_catalog(tmp_external_relation) -%}
   {%- do adapter.delete_from_glue_catalog(tmp_relation) -%}
 
   {% if lf_tags_config is not none %}
@@ -188,9 +205,10 @@
     {{ adapter.apply_lf_grants(target_relation, lf_grants) }}
   {% endif %}
 
-
+  -- delete csv file from s3
+  {% do adapter.delete_from_s3(tmp_s3_location) %}
+  
   {{ return(sql_table) }}
-
 {% endmacro %}
 
 {% macro athena__create_csv_table(model, agate_table) %}
