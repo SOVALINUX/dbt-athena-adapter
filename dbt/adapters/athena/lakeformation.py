@@ -2,6 +2,7 @@
 
 from typing import Dict, List, Optional, Sequence, Set, Union
 
+from dbt_common.exceptions import DbtRuntimeError
 from mypy_boto3_lakeformation import LakeFormationClient
 from mypy_boto3_lakeformation.type_defs import (
     AddLFTagsToResourceResponseTypeDef,
@@ -16,8 +17,7 @@ from mypy_boto3_lakeformation.type_defs import (
 from pydantic import BaseModel
 
 from dbt.adapters.athena.relation import AthenaRelation
-from dbt.events import AdapterLogger
-from dbt.exceptions import DbtRuntimeError
+from dbt.adapters.events.logging import AdapterLogger
 
 logger = AdapterLogger("AthenaLakeFormation")
 
@@ -26,7 +26,7 @@ class LfTagsConfig(BaseModel):
     enabled: bool = False
     tags: Optional[Dict[str, str]] = None
     tags_columns: Optional[Dict[str, Dict[str, List[str]]]] = None
-    inherited_tags: List[str] = []
+    inherited_tags: Optional[List[str]] = None
 
 
 class LfTagsManager:
@@ -36,7 +36,7 @@ class LfTagsManager:
         self.table = relation.identifier
         self.lf_tags = lf_tags_config.tags
         self.lf_tags_columns = lf_tags_config.tags_columns
-        self.lf_inherited_tags = set(lf_tags_config.inherited_tags)
+        self.lf_inherited_tags = set(lf_tags_config.inherited_tags) if lf_tags_config.inherited_tags else set()
 
     def process_lf_tags_database(self) -> None:
         if self.lf_tags:

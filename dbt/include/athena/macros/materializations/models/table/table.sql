@@ -1,13 +1,19 @@
 -- TODO create a drop_relation_with_versions, to be sure to remove all historical versions of a table
-{% materialization table, adapter='athena' -%}
+{% materialization table, adapter='athena', supported_languages=['sql', 'python'] -%}
   {%- set identifier = model['alias'] -%}
+  {%- set language = model['language'] -%}
 
   {%- set lf_tags_config = config.get('lf_tags_config') -%}
-  {%- set lf_inherited_tags = config.get('lf_inherited_tags') -%}
   {%- set lf_grants = config.get('lf_grants') -%}
 
   {%- set table_type = config.get('table_type', default='hive') | lower -%}
   {%- set old_relation = adapter.get_relation(database=database, schema=schema, identifier=identifier) -%}
+  {%- set old_tmp_relation = adapter.get_relation(identifier=identifier ~ '__ha',
+                                             schema=schema,
+                                             database=database) -%}
+  {%- set old_bkp_relation = adapter.get_relation(identifier=identifier ~ '__bkp',
+                                             schema=schema,
+                                             database=database) -%}
   {%- set is_ha = config.get('ha', default=false) -%}
   {%- set s3_data_dir = config.get('s3_data_dir', default=target.s3_data_dir) -%}
   {%- set s3_data_naming = config.get('s3_data_naming', default='table_unique') -%}
@@ -45,14 +51,19 @@
 
     -- for ha tables that are not in full refresh mode and when the relation exists we use the swap behavior
     {%- if is_ha and not is_full_refresh_mode and old_relation is not none -%}
-      -- drop the tmp_relation
-      {%- if tmp_relation is not none -%}
-        {%- do adapter.delete_from_glue_catalog(tmp_relation) -%}
+      -- drop the old_tmp_relation if it exists
+      {%- if old_tmp_relation is not none -%}
+        {%- do adapter.delete_from_glue_catalog(old_tmp_relation) -%}
       {%- endif -%}
 
       -- create tmp table
-      {%- set query_result = safe_create_table_as(False, tmp_relation, sql, force_batch) -%}
-
+      {%- set query_result = safe_create_table_as(False, tmp_relation, compiled_code, language, force_batch) -%}
+      -- Execute python code that is available in query result object
+      {%- if language == 'python' -%}
+        {% call statement('create_table', language=language) %}
+          {{ query_result }}
+        {% endcall %}
+      {%- endif -%}
       -- swap table
       {%- set swap_table = adapter.swap_table(tmp_relation, target_relation) -%}
 
@@ -66,54 +77,99 @@
       {%- if old_relation is not none -%}
         {{ drop_relation(old_relation) }}
       {%- endif -%}
-      {%- set query_result = safe_create_table_as(False, target_relation, sql, force_batch) -%}
+      {%- set query_result = safe_create_table_as(False, target_relation, compiled_code, language, force_batch) -%}
+      -- Execute python code that is available in query result object
+      {%- if language == 'python' -%}
+        {% call statement('create_table', language=language) %}
+          {{ query_result }}
+        {% endcall %}
+      {%- endif -%}
     {%- endif -%}
 
-    {{ set_table_classification(target_relation) }}
-
+    {%- if language != 'python' -%}
+      {{ set_table_classification(target_relation) }}
+    {%- endif -%}
   {%- else -%}
 
     {%- if old_relation is none -%}
-      {%- set query_result = safe_create_table_as(False, target_relation, sql, force_batch) -%}
+      {%- set query_result = safe_create_table_as(False, target_relation, compiled_code, language, force_batch) -%}
+      -- Execute python code that is available in query result object
+      {%- if language == 'python' -%}
+        {% call statement('create_table', language=language) %}
+          {{ query_result }}
+        {% endcall %}
+      {%- endif -%}
     {%- else -%}
       {%- if old_relation.is_view -%}
-        {%- set query_result = safe_create_table_as(False, tmp_relation, sql, force_batch) -%}
+        {%- set query_result = safe_create_table_as(False, tmp_relation, compiled_code, language, force_batch) -%}
+        -- Execute python code that is available in query result object
+        {%- if language == 'python' -%}
+          {% call statement('create_table', language=language) %}
+            {{ query_result }}
+          {% endcall %}
+        {%- endif -%}
         {%- do drop_relation(old_relation) -%}
         {%- do rename_relation(tmp_relation, target_relation) -%}
       {%- else -%}
-
-        {%- if tmp_relation is not none -%}
-          {%- do drop_relation(tmp_relation) -%}
+        -- delete old tmp iceberg table if it exists
+        {%- if old_tmp_relation is not none -%}
+          {%- do drop_relation(old_tmp_relation) -%}
         {%- endif -%}
 
-        {%- set old_relation_bkp = make_temp_relation(old_relation, '__bkp') -%}
         -- If we have this, it means that at least the first renaming occurred but there was an issue
         -- afterwards, therefore we are in weird state. The easiest and cleanest should be to remove
         -- the backup relation. It won't have an impact because since we are in the else condition,
         -- that means that old relation exists therefore no downtime yet.
-        {%- if old_relation_bkp is not none -%}
+        {%- if old_bkp_relation is not none -%}
+          {%- do drop_relation(old_bkp_relation) -%}
+        {%- endif -%}
+
+        {% set query_result = safe_create_table_as(False, tmp_relation, compiled_code, language, force_batch) %}
+        -- Execute python code that is available in query result object
+        {%- if language == 'python' -%}
+          {% call statement('create_table', language=language) %}
+            {{ query_result }}
+          {% endcall %}
+        {%- endif -%}
+
+        {%- set old_relation_table_type = adapter.get_glue_table_type(old_relation).value if old_relation else none -%}
+
+        -- we cannot use old_bkp_relation, because it returns None if the relation doesn't exist
+        -- we need to create a python object via the make_temp_relation instead
+        {%- set old_relation_bkp = make_temp_relation(old_relation, '__bkp') -%}
+
+        {%- if old_relation_table_type == 'iceberg_table' -%}
+          {{ rename_relation(old_relation, old_relation_bkp) }}
+        {%- else  -%}
+          {%- do drop_relation_glue(old_relation) -%}
+        {%- endif -%}
+
+        -- publish the target table doing a final renaming
+        {{ rename_relation(tmp_relation, target_relation) }}
+
+        -- if old relation is iceberg_table, we have a backup
+        -- therefore we can drop the old relation backup, in all other cases there is nothing to do
+        -- in case of switch from hive to iceberg the backup table do not exists
+        -- in case of first run, the backup table do not exists
+        {%- if old_relation_table_type == 'iceberg_table' -%}
           {%- do drop_relation(old_relation_bkp) -%}
         {%- endif -%}
 
-        {% set query_result = safe_create_table_as(False, tmp_relation, sql, force_batch) %}
-
-        {{ rename_relation(old_relation, old_relation_bkp) }}
-        {{ rename_relation(tmp_relation, target_relation) }}
-
-        {{ drop_relation(old_relation_bkp) }}
       {%- endif -%}
     {%- endif -%}
 
   {%- endif -%}
 
-  {% call statement("main") %}
-    SELECT '{{ query_result }}';
+  {% call statement("main", language=language) %}
+    {%- if language=='sql' -%}
+      SELECT '{{ query_result }}';
+    {%- endif -%}
   {% endcall %}
 
   {{ run_hooks(post_hooks) }}
 
   {% if lf_tags_config is not none %}
-    {{ adapter.add_lf_tags(target_relation, lf_tags_config, lf_inherited_tags) }}
+    {{ adapter.add_lf_tags(target_relation, lf_tags_config) }}
   {% endif %}
 
   {% if lf_grants is not none %}
