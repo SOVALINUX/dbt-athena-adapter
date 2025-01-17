@@ -51,9 +51,10 @@
 
     -- for ha tables that are not in full refresh mode and when the relation exists we use the swap behavior
     {%- if is_ha and not is_full_refresh_mode and old_relation is not none -%}
-      -- drop the old_tmp_relation if it exists
-      {%- if old_tmp_relation is not none -%}
-        {%- do adapter.delete_from_glue_catalog(old_tmp_relation) -%}
+      -- drop the tmp_relation if it exists
+      {%- if tmp_relation is not none -%}
+        {%- do log('Trying to drop old relation') -%}
+        {%- do adapter.delete_from_glue_catalog(tmp_relation) -%}
       {%- endif -%}
 
       -- create tmp table
@@ -112,8 +113,8 @@
         {%- do rename_relation(tmp_relation, target_relation) -%}
       {%- else -%}
         -- delete old tmp iceberg table if it exists
-        {%- if old_tmp_relation is not none -%}
-          {%- do drop_relation(old_tmp_relation) -%}
+        {%- if tmp_relation is not none -%}
+          {%- do drop_relation(tmp_relation) -%}
         {%- endif -%}
 
         -- If we have this, it means that at least the first renaming occurred but there was an issue
