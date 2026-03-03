@@ -168,11 +168,11 @@
   -- Only run if incremental source is configured (optional feature)
   {% set cleanup_target = var('increment_cleanup_target_name', none) %}
   {% if incremental_source_name and incremental_source_table_name %}
-    {% if cleanup_target and target.name == cleanup_target %}
+    {% if cleanup_target and target.name in cleanup_target %}
       {% set cleanup_result = cleanup_s3_etags(initial_s3_etags, incremental_source_name, incremental_source_table_name) %}
       {{ log("S3 cleanup result: " ~ cleanup_result['deleted'] ~ " deleted, " ~ cleanup_result['skipped'] ~ " skipped", info=true) }}
     {% elif cleanup_target %}
-      {{ log("S3 cleanup skipped: current target '" ~ target.name ~ "' does not match configured target '" ~ cleanup_target ~ "'", info=true) }}
+      {{ log("S3 cleanup skipped: current targets '" ~ target.name ~ "' does not match configured target '" ~ cleanup_target ~ "'", info=true) }}
     {% endif %}
   {% endif %}
 
