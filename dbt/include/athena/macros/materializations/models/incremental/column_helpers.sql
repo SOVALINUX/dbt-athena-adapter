@@ -7,7 +7,7 @@
       alter {{ relation.type }} {{ relation.render_hive() }}
           add columns (
             {%- for column in add_columns -%}
-                {{ column.name }} {{ ddl_data_type(column.data_type, table_type) }}{{ ', ' if not loop.last }}
+                `{{ column.name }}` {{ ddl_data_type(column.data_type, table_type) }}{{ ', ' if not loop.last }}
             {%- endfor -%}
           )
   {%- endset -%}
@@ -36,10 +36,10 @@
   {% endif %}
 
   {% set sql -%}
-      alter {{ relation.type }} {{ relation.render_hive() }}
+      alter {{ relation.type }} {{ relation.include(database=False).render_hive() }}
           replace columns (
             {%- for column in replace_columns -%}
-                {{ column.name }} {{ ddl_data_type(column.data_type, table_type) }}{{ ', ' if not loop.last }}
+                `{{ column.name }}` {{ ddl_data_type(column.data_type, table_type) }}{{ ', ' if not loop.last }}
             {%- endfor -%}
           )
   {%- endset -%}
