@@ -15,7 +15,9 @@ package_name = "dbt-athena-community"
 
 # get version from a separate file
 def _get_plugin_version_dict() -> Dict[str, Any]:
-    _version_path = os.path.join(this_directory, "dbt", "adapters", "athena", "__version__.py")
+    _version_path = os.path.join(
+        this_directory, "dbt", "adapters", "athena", "__version__.py"
+    )
     _semver = r"""(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)"""
     _pre = r"""((?P<prekind>a|b|rc)(?P<pre>\d+))?"""
     _version_pattern = rf"""version\s*=\s*["']{_semver}{_pre}["']"""
@@ -53,7 +55,7 @@ setup(
         "dbt-common>=1.0.0b2,<2.0",
         "dbt-adapters>=1.0.0b2,<2.0",
         # add dbt-core to ensure backwards compatibility of installation, this is not a functional dependency
-        "dbt-core>=1.8.1",
+        "dbt-core>=1.8.1,<2.0",
         "boto3>=1.28",
         "boto3-stubs[athena,glue,lakeformation,sts]>=1.28",
         "pyathena>=2.25,<4.0",
