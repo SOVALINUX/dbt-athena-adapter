@@ -15,9 +15,7 @@ package_name = "dbt-athena-community"
 
 # get version from a separate file
 def _get_plugin_version_dict() -> Dict[str, Any]:
-    _version_path = os.path.join(
-        this_directory, "dbt", "adapters", "athena", "__version__.py"
-    )
+    _version_path = os.path.join(this_directory, "dbt", "adapters", "athena", "__version__.py")
     _semver = r"""(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)"""
     _pre = r"""((?P<prekind>a|b|rc)(?P<pre>\d+))?"""
     _version_pattern = rf"""version\s*=\s*["']{_semver}{_pre}["']"""
